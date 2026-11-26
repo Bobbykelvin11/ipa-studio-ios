@@ -15,11 +15,24 @@ struct IPAStudioApp: App {
                 .environmentObject(store)
                 .onOpenURL { url in
                     guard url.isFileURL else { return }
+                    // "Open in" / Share Sheet: the URL may be security-scoped or in our Inbox.
                     Task {
-                        do {
-                            try await store.importIPA(from: url)
-                        } catch {
-                            store.lastError = error.localizedDescription
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        var isDir: ObjCBool = false
+                        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+                        let targets: [URL] = (exists && isDir.boolValue) ? FilePicking.ipaFiles(in: url) : [url]
+                        if targets.isEmpty { store.lastError = "No .ipa files found in “\(url.lastPathComponent)”." }
+                        for t in targets {
+                            guard FilePicking.looksLikeIPA(t) else {
+                                store.lastError = "“\(t.lastPathComponent)” isn't an IPA file. IPA Studio opens .ipa apps."
+                                continue
+                            }
+                            do {
+                                try await store.importIPA(from: t)
+                            } catch {
+                                store.lastError = error.localizedDescription
+                            }
                         }
                     }
                 }
